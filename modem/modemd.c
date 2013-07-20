@@ -5,6 +5,8 @@
 #include <sys/select.h>
 #include <termios.h>
 
+#include "modem.h"
+
 #define MAX_MATCH 10
 #define BUF_LEN 1024
 
@@ -22,6 +24,8 @@ struct dispatch_entry_t {
 };
 
 struct dispatch_entry_t* dispatch_head = 0;
+
+modem_t modem;
 
 int mode;
 int guarded;
@@ -167,6 +171,7 @@ void setup() {
     t.c_cc[VTIME] = 10;
     tcsetattr(fileno(stdin), 0, &t);
 
+    modem_init(&modem);
     regs_init();
     term_init();
     reset_init();

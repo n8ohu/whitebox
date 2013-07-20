@@ -16,7 +16,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/Modules")
 # file at some point.
 #
 set(PROJECT_VERSION_MAJOR 0)
-set(PROJECT_VERSION_MINOR 1)
+set(PROJECT_VERSION_MINOR 2)
 # Set to patch level is needed, otherwise leave FALSE.
 set(PROJECT_VERSION_PATCH FALSE)
 set(PROJECT_VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
@@ -31,13 +31,15 @@ message(STATUS "whitebox version: ${PROJECT_VERSION}")
 # Build shared libraries by default
 set(BUILD_SHARED_LIBS FALSE)
 
-add_subdirectory(linux-cortexm)
-
 add_subdirectory(hdl)
+
+add_subdirectory(linux-cortexm)
 
 add_subdirectory(driver)
 
 add_subdirectory(lib)
+
+add_subdirectory(modem)
 
 add_subdirectory(gnuradio)
 

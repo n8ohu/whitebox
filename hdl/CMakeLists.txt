@@ -44,6 +44,8 @@ add_custom_target(hdl
     DEPENDS signalgenerator.v exciter.v
 )
 
+# TODO: generate toplevel.dat, which happens right now in Libero SoC.
+
 add_subdirectory(constraint)
 
 add_dependencies(hdl constraint)

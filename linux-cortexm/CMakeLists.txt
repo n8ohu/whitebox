@@ -26,13 +26,6 @@ configure_file(whitebox.busybox whitebox.busybox
     COPYONLY
 )
 
-add_custom_target(linux_patch
-    COMMAND patch -Np1 < ${CMAKE_CURRENT_SOURCE_DIR}/a2fgpio.patch
-    DEPENDS a2fgpio.patch
-    WORKING_DIRECTORY ${KERNELDIR}
-    VERBATIM
-)
-
 macro(emcraft_build CMD)
     add_custom_target(${CMD}
         COMMAND ${CMAKE_COMMAND} -DPROJECT_NAME=${CMAKE_PROJECT_NAME} -DINSTALL_ROOT=${INSTALL_ROOT} -DCOMMAND=${CMD} -P ${CMAKE_CURRENT_SOURCE_DIR}/linux.cmake
@@ -47,3 +40,5 @@ emcraft_build(bmenuconfig)
 emcraft_build(busybox)
 emcraft_build(kclean)
 emcraft_build(bclean)
+
+add_custom_target(kernel_image ALL DEPENDS linux busybox)

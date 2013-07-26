@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include "gpio.h"
 #include "adf4351.h"
 #include "cmx991.h"
 
@@ -39,49 +40,6 @@
 
 #define GPIO_OUTPUT_MODE (0 << 0)
 #define GPIO_INPUT_MODE  (1 << 0)
-
-void GPIO_config(unsigned gpio, int inout) {
-    int fd;
-    char buf[512];
-
-    fd = open("/sys/class/gpio/export", O_WRONLY);
-    sprintf(buf, "%d", gpio);
-    write(fd, buf, strlen(buf));
-    close(fd);
-
-    sprintf(buf, "/sys/class/gpio/gpio%d/direction", gpio);
-    fd = open(buf, O_WRONLY);
-    if (inout == GPIO_OUTPUT_MODE)
-        write(fd, "out", 3);
-    else
-        write(fd, "in", 2);
-    close(fd);
-}
-
-void GPIO_set_output(unsigned gpio, unsigned value) {
-    int fd;
-    char buf[512];
-    sprintf(buf, "/sys/class/gpio/gpio%d/value", gpio);
-    fd = open(buf, O_WRONLY);
-    if (value)
-        write(fd, "1", 1);
-    else
-        write(fd, "0", 1);
-    close(fd);
-}
-
-int GPIO_get_input(unsigned gpio) {
-    char value;
-    int ret;
-    int fd;
-    char buf[512];
-    sprintf(buf, "/sys/class/gpio/gpio%d/value", gpio);
-    fd = open(buf, O_RDONLY);
-    read(fd, &value, 1);
-    ret = value == '0' ? 0 : 1;
-    close(fd);
-    return ret;
-}
 
 void radio_wr_byte(uint8_t byte) {
     int i, j;

@@ -16,6 +16,7 @@ set(WHITEBOX_SRCS
     adf4351.c
     cmx991.c
     radio.c
+    gpio.c
 )
 
 add_library(whitebox ${WHITEBOX_SRCS})
@@ -26,6 +27,7 @@ set(WHITEBOX_PUBLIC_HEADERS
     adf4351.h
     cmx991.h
     radio.h
+    gpio.h
 )
 
 install(FILES ${WHITEBOX_PUBLIC_HEADERS}

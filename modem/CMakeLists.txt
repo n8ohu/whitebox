@@ -2,8 +2,8 @@ find_package(PythonInterp REQUIRED)
 
 add_custom_command(
     OUTPUT modem.h modem.c
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/mvic.py modem/modem.c modem/modem.h
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/mvic.py
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/util/mvic.py modem/modem.c modem/modem.h
+    DEPENDS ${CMAKE_SOURCE_DIR}/util/mvic.py
 )
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})

@@ -81,12 +81,11 @@ class MetaModel(type):
 
 class Model(object):
     __metaclass__ = MetaModel
-    header_template = 'base.h'
-    source_template = 'base.c'
+    template = 'base'
 
 def render(output_filename, template, model):
     from jinja2 import Environment, PackageLoader
-    env = Environment(loader=PackageLoader('mvic', 'templates'), autoescape=False, trim_blocks=True)#, lstrip_blocks=True)
+    env = Environment(loader=PackageLoader('util', 'lib', 'templates'), autoescape=False, trim_blocks=True, lstrip_blocks=True)
 
     model_name = model.__class__.__name__.lower()
     render_dict = {
@@ -98,25 +97,3 @@ def render(output_filename, template, model):
         t = env.get_template(template)
         f.write(t.render(render_dict))
 
-def generate(f):
-    #import os.path
-    #dirs, filename = os.path.split(f)
-    #fname, extension = os.path.splitext(filename)
-    #print dirs, fname, extension
-    #if extension in ('c', 'h'):
-    #    optional_import = dirs
-    #    view = fname
-    #    toC(view
-    from models import Modem
-    m = Modem()
-    render('modem.h', 'base.h', m)
-    render('modem.c', 'base.c', m)
-
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='Generate MViC')
-    parser.add_argument('files', metavar='file', type=str, nargs='+',
-            help='Files to generate.')
-    args = parser.parse_args()
-    for f in args.files:
-        generate(f)

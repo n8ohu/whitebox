@@ -6,10 +6,16 @@ add_custom_command(
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/adf4351.regs ${CMAKE_CURRENT_SOURCE_DIR}/adf4351_impl.c.tmpl ${CMAKE_CURRENT_SOURCE_DIR}/adf4351_impl.h.tmpl
 )
 
+#add_custom_command(
+#    OUTPUT cmx991.c cmx991.h
+#    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/util/genregs.py --name=cmx991 --src-dir=${CMAKE_CURRENT_SOURCE_DIR} --build-dir=${CMAKE_CURRENT_BINARY_DIR}
+#    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmx991.regs ${CMAKE_CURRENT_SOURCE_DIR}/cmx991_impl.c.tmpl ${CMAKE_CURRENT_SOURCE_DIR}/cmx991_impl.h.tmpl
+#)
+
 add_custom_command(
     OUTPUT cmx991.c cmx991.h
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/util/genregs.py --name=cmx991 --src-dir=${CMAKE_CURRENT_SOURCE_DIR} --build-dir=${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmx991.regs ${CMAKE_CURRENT_SOURCE_DIR}/cmx991_impl.c.tmpl ${CMAKE_CURRENT_SOURCE_DIR}/cmx991_impl.h.tmpl
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/generate.py lib/cmx991.c lib/cmx991.h
+    DEPENDS ${CMAKE_SOURCE_DIR}/generate.py models.py templates/cmx991.c templates/cmx991.h
 )
 
 set(WHITEBOX_SRCS

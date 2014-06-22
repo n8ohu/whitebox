@@ -12,7 +12,6 @@
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <arpa/inet.h>
-#include <netinet/in.h>
 #include <regex.h>
 #include "whitebox.h"
 #include "whiteboxd.h"
@@ -38,22 +37,6 @@ float diff(struct timespec start, struct timespec end)
     return (temp.tv_sec * 1e9 + temp.tv_nsec) / 1e9 * 1e3;
 }
 
-enum whitebox_mode {
-    WBM_IDLE         = 0x00000000,
-    WBM_IQ_SOCKET    = 0x00000001,
-    WBM_IQ_FILE      = 0x00000002,
-    WBM_IQ_TONE      = 0x00000004,
-    WBM_IQ_TEST      = 0x00000010,
-    WBM_AUDIO_TONE   = 0x00000100,
-    WBM_AUDIO_SOCKET = 0x00000200,
-};
-
-#define WBM_DEFAULT   WBM_IQ_SOCKET
-#define WBM_IQ_FD (WBM_IQ_SOCKET | WBM_IQ_FILE)
-#define WBM_IQ_MIXED  (WBM_AUDIO_TONE | WBM_AUDIO_SOCKET)
-#define WBM_AUDIO_FD (WBM_AUDIO_SOCKET)
-#define WBM_FROM_SOCKET (WBM_IQ_SOCKET)
-
 char *whitebox_mode_to_string(enum whitebox_mode mode)
 {
     if (mode & WBM_IQ_FD)
@@ -69,78 +52,6 @@ char *whitebox_mode_to_string(enum whitebox_mode mode)
     else
         return "idle";
 }
-
-struct whitebox_config {
-    enum whitebox_mode mode;
-
-    int verbose_flag;
-    int sample_rate;
-    float carrier_freq;
-    unsigned short ctl_port;
-    unsigned short audio_port;
-    unsigned short port;
-    float duration;
-    int debug;
-    
-    // complex variable z
-    char *z_filename;
-    float tone1;
-
-    // real variable x
-    float tone2;
-    int16_t tone2_offset;
-
-    int ctl_enable;
-    int dat_enable;
-    int httpd_enable;
-    int audio_enable;
-
-    char modulation[256];
-    char audio_source[256];
-    char iq_source[256];
-};
-
-struct whitebox_runtime {
-    int fd;
-    int i;
-    int latency_ms;
-
-    int ctl_listening_fd;
-    struct sockaddr_in ctl_sock_me, ctl_sock_other;
-    size_t ctl_slen;
-    int ctl_fd;
-    int ctl_needs_poll;
-    
-    int dat_listening_fd;
-    struct sockaddr_in dat_sock_me, dat_sock_other;
-    size_t dat_slen;
-    int dat_fd;
-    int dat_needs_poll;
-
-    int audio_listening_fd;
-    struct sockaddr_in audio_sock_me, audio_sock_other;
-    size_t audio_slen;
-    int audio_fd;
-    int audio_needs_poll;
-
-
-    uint32_t tone1_fcw;
-    uint32_t tone1_phase;
-
-    uint32_t tone2_fcw;
-    uint32_t tone2_phase;
-
-    int16_t global_re;
-    int16_t global_im;
-
-    struct whitebox_source *iq_source;
-    struct whitebox_source *audio_source;
-
-    int ptt;
-    int ptl;
-
-    int rx_cal;
-};
 
 struct whitebox_modulator {
     char name[256];
@@ -208,6 +119,7 @@ void whitebox_config_init(struct whitebox_config *config)
 void whitebox_runtime_init(struct whitebox_runtime *rt)
 {
     rt->fd = -1;
+    rt->log_file = stderr;
     rt->i = 0;
     rt->ctl_fd = -1;
     rt->ctl_needs_poll = 0;
@@ -268,8 +180,7 @@ int reconfigure_runtime(whitebox_t *wb, struct whitebox_config *config,
         while (!whitebox_plls_locked(wb)) {
             if (done)
                 exit(1);
-            printf("U");
-            fflush(stdout);
+            whitebox_log(WBL_WARN, "U");
         }
     }
 
@@ -278,9 +189,9 @@ int reconfigure_runtime(whitebox_t *wb, struct whitebox_config *config,
     if (mode != config->mode) {
         mode = config->mode;
         if (config->verbose_flag)
-            printf("Changed mode to %d\n", mode);
+            whitebox_log(WBL_INFO, "Changed mode to %d\n", mode);
         if (config->mode & WBM_IQ_MIXED) {
-            printf("fir on\n");
+            whitebox_log(WBL_INFO, "fir on\n");
             whitebox_tx_flags_enable(wb, WS_FIREN);
         } else {
             whitebox_tx_flags_disable(wb, WS_FIREN);
@@ -312,19 +223,17 @@ int reconfigure_runtime(whitebox_t *wb, struct whitebox_config *config,
     }
 
     if (config->verbose_flag > 2) {
-        printf("WBMODE %08x\n", config->mode);
-        whitebox_debug_to_file(wb, stdout);
+        whitebox_log(WBL_INFO, "WBMODE %08x\n", config->mode);
+        //whitebox_debug_to_file(wb, stdout);
     }
 }
 
 int change_mode(whitebox_t *wb, struct whitebox_config *config,
         struct whitebox_runtime *rt, enum whitebox_mode mode)
 {
-    printf("hi %s\n", whitebox_mode_to_string(mode));
     if (config->mode != mode) {
         config->mode = mode;
-        if (config->verbose_flag)
-            printf("Changing mode to %s\n", whitebox_mode_to_string(config->mode));
+        whitebox_log(WBL_INFO, "Changing mode to %s\n", whitebox_mode_to_string(config->mode));
     }
     return 0;
 }
@@ -335,6 +244,11 @@ int whitebox_start(whitebox_t *wb, struct whitebox_config *config,
     struct timespec res;
     int optval = 1;
     socklen_t optlen = sizeof(optval);
+    static int16_t coeffs[WF_COEFF_COUNT];
+    int i, n;
+    const rlim_t stack_size = 4 * 1024 * 1024;
+    struct rlimit rl;
+    int result;
 
     dsp_init();
     whitebox_init(wb);
@@ -349,26 +263,18 @@ int whitebox_start(whitebox_t *wb, struct whitebox_config *config,
 
     whitebox_fir_load_coeffs(wb, 0, NUM_WEAVER_TAPS, weaver_fir_taps);
 
-    if (config->verbose_flag) {
-        int16_t coeffs[WF_COEFF_COUNT];
-        int i, n;
-        const rlim_t stack_size = 4 * 1024 * 1024;
-        struct rlimit rl;
-        int result;
+    clock_getres(CLOCK_MONOTONIC, &res);
+    whitebox_log(WBL_INFO, "Clock resolution: %f ms\n", (res.tv_sec * 1e9 + res.tv_nsec) / 1e6);
+    result = getrlimit(RLIMIT_STACK, &rl);
+    whitebox_log(WBL_INFO, "stack size:%d MB\n", rl.rlim_cur/1024/1024);
 
-        clock_getres(CLOCK_MONOTONIC, &res);
-        printf("Clock resolution: %f ms\n", (res.tv_sec * 1e9 + res.tv_nsec) / 1e6);
-        result = getrlimit(RLIMIT_STACK, &rl);
-        printf("stack size:%d MB\n", rl.rlim_cur/1024/1024);
-    
-        printf("sincos LUT size: %d kB, %d bits\n", DDS_RAM_SIZE_BITS >> 13, DDS_RAM_SIZE_BITS);
-        n = whitebox_fir_get_coeffs(wb, 0, WF_COEFF_COUNT, &coeffs);
-        printf("FIR coefficients: [");
-        for (i = 0; i < n-1; ++i)
-            printf("%d, ", coeffs[i]);
-        printf("%d]\n", coeffs[n-1]);
-        whitebox_debug_to_file(wb, stdout);
-    }
+    whitebox_log(WBL_INFO, "sincos LUT size: %d kB, %d bits\n", DDS_RAM_SIZE_BITS >> 13, DDS_RAM_SIZE_BITS);
+    n = whitebox_fir_get_coeffs(wb, 0, WF_COEFF_COUNT, &coeffs);
+    whitebox_log(WBL_INFO, "FIR coefficients: [");
+    for (i = 0; i < n-1; ++i)
+        whitebox_log(WBL_INFO, "%d, ", coeffs[i]);
+    whitebox_log(WBL_INFO, "%d]\n", coeffs[n-1]);
+    //whitebox_debug_to_file(wb, stdout);
 
     if (config->ctl_enable) {
         /* Listen for incomming control packets */
@@ -458,7 +364,7 @@ int x_read(whitebox_t *wb, struct whitebox_config *config,
             if ((recvd == 1 && *((char*)x_dest_offset) == '\0') || (recvd == 0))
                 break;
             if (recvd % 2 != 0)
-                printf("not word aligned\n");
+                whitebox_log(WBL_WARN, "not word aligned\n");
             //rt->ptt = 1;
             //printf("x"); fflush(stdout);
             in_available += recvd << 1;
@@ -471,8 +377,7 @@ int x_read(whitebox_t *wb, struct whitebox_config *config,
             close(rt->audio_fd);
             rt->audio_fd = -1;
             change_mode(wb, config, rt, WBM_IDLE);
-            if (config->verbose_flag)
-                printf("Connection closed\n");
+            whitebox_log(WBL_INFO, "Connection closed\n");
             return 0;
         }
     }
@@ -499,7 +404,7 @@ int z_read(whitebox_t *wb, struct whitebox_config *config,
             if ((recvd == 1 && *((char*)z_dest_offset) == '\0') || (recvd == 0))
                 break;
             if (recvd % 4 != 0)
-                printf("not word aligned\n");
+                whitebox_log(WBL_WARN, "not word aligned\n");
             //rt->ptt = 1;
             //printf("z"); fflush(stdout);
             in_available += recvd;
@@ -512,8 +417,7 @@ int z_read(whitebox_t *wb, struct whitebox_config *config,
             close(rt->dat_fd);
             rt->dat_fd = -1;
             change_mode(wb, config, rt, WBM_IDLE);
-            if (config->verbose_flag)
-                printf("Connection closed\n");
+            whitebox_log(WBL_INFO, "Connection closed\n");
             return 0;
         }
     } else if (config->mode & WBM_IQ_FILE) {
@@ -524,14 +428,14 @@ int z_read(whitebox_t *wb, struct whitebox_config *config,
         while (out_available > 0) {
             if ((recvd = read(rt->dat_fd, (void*)z_dest_offset, out_available)) < 0) {
                 if (errno == EAGAIN) {
-                    printf("w");
+                    whitebox_log(WBL_INFO, "w");
                     break;
                 }
                 perror("read");
                 exit(1);
             }
             if (recvd % 4 != 0)
-                printf("not word aligned\n");
+                whitebox_log(WBL_ERROR, "not word aligned\n");
             if (recvd == 0)
                 break;
             in_available += recvd;
@@ -556,7 +460,7 @@ void z_test(whitebox_t *wb, struct whitebox_config *config,
     for (n = 0; n < in_available >> 2; ++n) {
         QUAD_UNPACK(*(uint32_t*)(z_dest + n), re, im);
         if ((int16_t)(re - 1) != rt->global_re || (int16_t)(im - 1) != rt->global_im) {
-            printf("missing samples %d, %d\n", rt->global_re, re);
+            whitebox_log(WBL_ERROR, "missing samples %d, %d\n", rt->global_re, re);
             exit(1);
         }
         rt->global_re = re;
@@ -624,49 +528,49 @@ int config_change(whitebox_t *wb, struct whitebox_config *config,
         int16_t correct_i, correct_q;
         whitebox_tx_get_correction(wb, &correct_i, &correct_q);
         correct_i = atoi(val);
-        printf("correct_i=%d\n", correct_i);
+        whitebox_log(WBL_INFO, "correct_i=%d\n", correct_i);
         whitebox_tx_set_correction(wb, correct_i, correct_q);
     } else if (strncmp(var, "offset_correct_q", strlen("offset_correct_q")) == 0) {
         int16_t correct_i, correct_q;
         whitebox_tx_get_correction(wb, &correct_i, &correct_q);
         correct_q = atoi(val);
-        printf("correct_q=%d\n", correct_q);
+        whitebox_log(WBL_INFO, "correct_q=%d\n", correct_q);
         whitebox_tx_set_correction(wb, correct_i, correct_q);
 
     } else if (strncmp(var, "gain_i", strlen("gain_i")) == 0) {
         float gain_i, gain_q;
         whitebox_tx_get_gain(wb, &gain_i, &gain_q);
         gain_i = atof(val);
-        printf("gain_i=%.2f\n", gain_i);
+        whitebox_log(WBL_INFO, "gain_i=%.2f\n", gain_i);
         whitebox_tx_set_gain(wb, gain_i, gain_q);
     } else if (strncmp(var, "gain_q", strlen("gain_q")) == 0) {
         float gain_i, gain_q;
         whitebox_tx_get_gain(wb, &gain_i, &gain_q);
         gain_q = atof(val);
-        printf("gain_q=%.2f\n", gain_q);
+        whitebox_log(WBL_INFO, "gain_q=%.2f\n", gain_q);
         whitebox_tx_set_gain(wb, gain_i, gain_q);
     } else if (strncmp(var, "tone1", strlen("tone1")) == 0) {
         config->tone1 = atof(val);
-        printf("tone1=%.3f kHz\n", config->tone1 / 1e3);
+        whitebox_log(WBL_INFO, "tone1=%.3f kHz\n", config->tone1 / 1e3);
         rt->tone1_fcw = freq_to_fcw(config->tone1, config->sample_rate);
     } else if (strncmp(var, "tone2", strlen("tone2")) == 0) {
         config->tone2 = atof(val);
-        printf("tone2=%.3f kHz\n", config->tone2 / 1e3);
+        whitebox_log(WBL_INFO, "tone2=%.3f kHz\n", config->tone2 / 1e3);
         rt->tone2_fcw = freq_to_fcw(config->tone2, config->sample_rate);
     } else if (strncmp(var, "freq", strlen("freq")) == 0) {
         config->carrier_freq = atof(val) * 1e6;
-        printf("carrier_freq=%.3f MHz\n", config->carrier_freq / 1e6);
+        whitebox_log(WBL_INFO, "carrier_freq=%.3f MHz\n", config->carrier_freq / 1e6);
         whitebox_tx_fine_tune(wb, config->carrier_freq);
     } else if (strncmp(var, "ptt", strlen("ptt")) == 0) {
         rt->ptt = atoi(val);
-        printf("ptt=%d\n", atoi(val));
+        whitebox_log(WBL_INFO, "ptt=%d\n", atoi(val));
     } else if (strncmp(var, "ptl", strlen("ptl")) == 0) {
         rt->ptl = atoi(val);
-        printf("ptl=%d\n", atoi(val));
+        whitebox_log(WBL_INFO, "ptl=%d\n", atoi(val));
     } else if (strncmp(var, "rx_cal", strlen("rx_cal")) == 0) {
         //whitebox_args_t w;
         rt->rx_cal = atoi(val);
-        printf("rx_cal=%d\n", atoi(val));
+        whitebox_log(WBL_INFO, "rx_cal=%d\n", atoi(val));
         if (rt->rx_cal) {
             whitebox_rx_cal_enable(wb);
         } else {
@@ -680,16 +584,16 @@ int config_change(whitebox_t *wb, struct whitebox_config *config,
         int16_t correct_i, correct_q;
         whitebox_rx_get_correction(wb, &correct_i, &correct_q);
         correct_i = atoi(val);
-        printf("rx_correct_i=%d\n", correct_i);
+        whitebox_log(WBL_INFO, "rx_correct_i=%d\n", correct_i);
         whitebox_rx_set_correction(wb, correct_i, correct_q);
     } else if (strncmp(var, "rx_offset_correct_q", strlen("rx_offset_correct_q")) == 0) {
         int16_t correct_i, correct_q;
         whitebox_rx_get_correction(wb, &correct_i, &correct_q);
         correct_q = atoi(val);
-        printf("rx_correct_q=%d\n", correct_q);
+        whitebox_log(WBL_INFO, "rx_correct_q=%d\n", correct_q);
         whitebox_rx_set_correction(wb, correct_i, correct_q);
     } else if (strncmp(var, "mode", strlen("mode")) == 0) {
-        printf("mode=%s\n", val);
+        whitebox_log(WBL_INFO, "mode=%s\n", val);
         if (strcmp(val, "cw") == 0)
             change_mode(wb, config, rt, WBM_IQ_TONE);
         else if (strcmp(val, "iq") == 0)
@@ -700,20 +604,20 @@ int config_change(whitebox_t *wb, struct whitebox_config *config,
             change_mode(wb, config, rt, WBM_AUDIO_SOCKET);
     } else if (strncmp(var, "latency", strlen("latency")) == 0) {
         rt->latency_ms = atoi(val);
-        printf("latency_ms=%d\n", rt->latency_ms);
+        whitebox_log(WBL_INFO, "latency_ms=%d\n", rt->latency_ms);
         whitebox_tx_set_latency(wb, rt->latency_ms);
     } else if (strncmp(var, "modulation", strlen("modulation")) == 0) {
         strncpy(config->modulation, val, 255);
         config->modulation[255] = '\0';
-        printf("modulation=%s\n", config->modulation);
+        whitebox_log(WBL_INFO, "modulation=%s\n", config->modulation);
     } else if (strncmp(var, "audio_source", strlen("audio_source")) == 0) {
         strncpy(config->audio_source, val, 255);
         config->audio_source[255] = '\0';
-        printf("audio_source=%s\n", config->audio_source);
+        whitebox_log(WBL_INFO, "audio_source=%s\n", config->audio_source);
     } else if (strncmp(var, "iq_source", strlen("iq_source")) == 0) {
         strncpy(config->iq_source, val, 255);
         config->iq_source[255] = '\0';
-        printf("iq_source=%s\n", config->iq_source);
+        whitebox_log(WBL_INFO, "iq_source=%s\n", config->iq_source);
         whitebox_source_free(rt->iq_source);
         for (i = 0; iq_sources[i].alloc; ++i) {
             if (strncmp(iq_sources[i].name, val, 255) == 0) {
@@ -723,107 +627,10 @@ int config_change(whitebox_t *wb, struct whitebox_config *config,
         }
         return -1;
     } else {
-        printf("bad bad %s\n", var);
+        whitebox_log(WBL_WARN, "bad bad %s\n", var);
         return -1;
     }
     return 0;
-}
-
-char *html_path(struct whitebox_config *config)
-{
-    if (config->debug)
-        return "/mnt/whitebox/lib/www/index.html";
-    else
-        return "/var/www/index.html";
-}
-
-int http_ctl(whitebox_t *wb, struct whitebox_config *config,
-        struct whitebox_runtime *rt)
-{
-    // This must be static!
-    static struct http_request request;
-
-    struct http_request *r = &request;
-    int result;
-
-    if (!config->httpd_enable) {
-        result = http_respond_error(rt->ctl_fd, r, 404);
-        goto done;
-    }
-
-    result = http_parse(rt->ctl_fd, r);
-    if (result < 0) {
-        printf("parse fail\n");
-        goto done;
-    }
-
-    if (strcmp(r->method, "GET") == 0 && strcmp(r->url, "/") == 0) {
-        result = http_respond_file(rt->ctl_fd, r,
-                "text/html",
-                html_path(config));
-    } else if (strcmp(r->method, "GET") == 0 && strcmp(r->url, "/config") == 0) {
-        int16_t correct_i, correct_q;
-        float gain_i, gain_q;
-        int16_t rx_correct_i, rx_correct_q;
-        
-        whitebox_tx_get_correction(wb, &correct_i, &correct_q);
-        whitebox_tx_get_gain(wb, &gain_i, &gain_q);
-        whitebox_rx_get_correction(wb, &rx_correct_i, &rx_correct_q);
-
-        result = http_respond_string(rt->ctl_fd, r,
-                "application/json",
-                "{ \"offset_correct_i\": %d,"
-                "\"offset_correct_q\": %d,"
-                "\"gain_i\": %.2f,"
-                "\"gain_q\": %.2f,"
-                "\"tone1\": %.1f,"
-                "\"tone2\": %.1f,"
-                "\"freq\": %.3f,"
-                "\"ptt\": %d,"
-                "\"ptl\": %d,"
-                "\"rx_cal\": %d,"
-                "\"rx_offset_correct_i\": %d,"
-                "\"rx_offset_correct_q\": %d,"
-                "\"mode\": \"%s\","
-                "\"latency\": \"%d\","
-                "\"modulation\": \"%s\","
-                "\"audio_source\": \"%s\","
-                "\"iq_source\": \"%s\""
-                "}",
-                correct_i, correct_q,
-                gain_i, gain_q,
-                config->tone1, config->tone2,
-                config->carrier_freq,
-                rt->ptt, rt->ptl,
-                rt->rx_cal,
-                rx_correct_i, rx_correct_q,
-                whitebox_mode_to_string(config->mode),
-                rt->latency_ms,
-                config->modulation,
-                config->audio_source,
-                config->iq_source
-                );
-    } else if (strcmp(r->method, "POST") == 0 && strcmp(r->url, "/") == 0) {
-        int i = 0;
-        while (i < HTTP_PARAMS_MAX && strlen(r->params[i].name) > 0) {
-            if (config_change(wb, config, rt, r->params[i].name, r->params[i].value) < 0) {
-                result = http_respond_error(rt->ctl_fd, r, 404);
-                goto done;
-            }
-            i++;
-        }
-        result = http_respond_string(rt->ctl_fd, r,
-                "text/plain",
-                "OK");
-    } else {
-        result = http_respond_error(rt->ctl_fd, r, 404);
-    }
-
-done:
-    close(rt->ctl_fd);
-    rt->ctl_needs_poll = 0;
-    rt->ctl_fd = -1;
-    return result;
 }
 
 #define WFD_WHITEBOX     0
@@ -920,7 +727,7 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
     if (fds[WFD_WHITEBOX].revents & POLLIN) {
         rx_in_available = ioctl(rt->fd, W_MMAP_READ, &src);
         if (rx_in_available < 0) {
-            printf("rx error\n");
+            whitebox_log(WBL_ERROR, "rx error\n");
             return -1;
         }
         rx_in_available = rx_in_available < (FRAME_SIZE << 2) ? rx_in_available : (FRAME_SIZE << 2);
@@ -952,7 +759,7 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
     }
 
     if (in_available < 0) {
-        printf("z_read\n");
+        whitebox_log(WBL_ERROR, "z_read\n");
     }
 
     if (config->mode & WBM_IQ_TEST) {
@@ -971,43 +778,39 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
     // step 5. call write on the whitebox device with how much data was received
     if (in_available > 0) {
         if (write(rt->fd, 0, in_available) != in_available) {
-            printf("Underrun\n");
-            fflush(stdout);
+            whitebox_log(WBL_ERROR, "Underrun\n");
             return -1;
         }
         else {
-            if (config->verbose_flag == 1) {
-                printf(".");
-                fflush(stdout);
-            }
+            //whitebox_log(WBL_INFO, ".");
         }
     } else {
-        if (config->verbose_flag == 1) {
+        /*if (config->verbose_flag == 1) {
             if (out_available == 0) printf("-");
             else printf(">");
             fflush(stdout);
-        }
+        }*/
     }
 
     rt->i += in_available >> 2;
 
     if (rx_in_available > 0) {
         if (read(rt->fd, 0, rx_in_available) != rx_in_available) {
-            printf("Overrun\n");
+            whitebox_log(WBL_ERROR, "Overrun\n");
             fflush(stdout);
             return -1;
         } else {
-            if (config->verbose_flag == 1) {
+            /*if (config->verbose_flag == 1) {
                 printf(".");
                 fflush(stdout);
-            }
+            }*/
         }
     } else {
-        if (config->verbose_flag == 1) {
+        /*if (config->verbose_flag == 1) {
             if (out_available == 0) printf("-");
             else printf(">");
             fflush(stdout);
-        }
+        }*/
     }
 
     for (f = 3; f < fcnt; ++f) {
@@ -1026,7 +829,7 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
             rt->ctl_fd = fd;
             fcntl(rt->ctl_fd, F_SETFL, fcntl(rt->ctl_fd, F_GETFL, 0) | O_NONBLOCK);
             if (config->verbose_flag > 2)
-                printf("Accepted client\n");
+                whitebox_log(WBL_INFO, "Accepted client\n");
             rt->ctl_needs_poll = 1;
         }
         if ((fds[f].fd == rt->ctl_fd)
@@ -1036,7 +839,7 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
         if ((fds[f].fd == rt->dat_listening_fd)
                 && (fds[f].revents & POLLIN)) {
             if (rt->dat_fd > 0) {
-                printf("Warning: too many dat connections\n");
+                whitebox_log(WBL_WARN, "too many dat connections\n");
                 return -1;
             }
             if ((rt->dat_fd = accept(rt->dat_listening_fd, (struct sockaddr*)&rt->dat_sock_other, &rt->dat_slen)) == -1) {
@@ -1044,14 +847,14 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
                 return -1;
             }
             if (config->verbose_flag > 2)
-                printf("Accepted client\n");
+                whitebox_log(WBL_INFO, "Accepted client\n");
             change_mode(wb, config, rt, WBM_IQ_SOCKET);
             rt->dat_needs_poll = 1;
         }
         if ((fds[f].fd == rt->audio_listening_fd)
                 && (fds[f].revents & POLLIN)) {
             if (rt->audio_fd > 0) {
-                printf("Warning: too many audio connections\n");
+                whitebox_log(WBL_WARN, "too many audio connections\n");
                 return -1;
             }
             if ((rt->audio_fd = accept(rt->audio_listening_fd, (struct sockaddr*)&rt->audio_sock_other, &rt->audio_slen)) == -1) {
@@ -1059,21 +862,20 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
                 return -1;
             }
             if (config->verbose_flag > 2)
-                printf("Accepted client\n");
+                whitebox_log(WBL_INFO, "Accepted client\n");
             change_mode(wb, config, rt, WBM_AUDIO_SOCKET);
             rt->audio_needs_poll = 1;
-            printf("now audio\n");
         }
     }
 
-    if (config->verbose_flag >= 3) {
+    /*if (config->verbose_flag >= 3) {
         int n;
         int16_t re, im;
         for (n = 0; n < in_available >> 2; ++n) {
             QUAD_UNPACK(*(uint32_t*)(z_dest + n), re, im);
             printf("%d, ", re);
         }
-    }
+    }*/
 
     /*if (rt->i > 48e3*20) {
         int fd = open("/sys/power/state", O_WRONLY);
@@ -1083,7 +885,7 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
     clock_gettime(CLOCK_MONOTONIC, &tl_finish);
     if (config->verbose_flag >= 2) {
         if (diff(tl_start, tl_finish) > 1.0)
-            printf("poll=%f sink=%f source=%f mix=%f write=%f (total=%f) out_available=%d in_available=%d\n",
+            whitebox_log(WBL_DEBUG, "poll=%f sink=%f source=%f mix=%f write=%f (total=%f) out_available=%d in_available=%d\n",
                     diff(tl_start, tl_poll),
                     diff(tl_poll, tl_sink),
                     diff(tl_sink, tl_source),
@@ -1110,7 +912,7 @@ int whitebox_run(whitebox_t *wb, struct whitebox_config *config,
         if (whitebox_step(wb, config, rt, total_samples) < 0) {
             if (errno == EINTR)
                 break;
-            printf("ERROR\n");
+            whitebox_log(WBL_ERROR, "ERROR\n");
             break;
         }
     }
@@ -1118,7 +920,7 @@ int whitebox_run(whitebox_t *wb, struct whitebox_config *config,
 
 void whitebox_finish(whitebox_t *wb, struct whitebox_config *config, struct whitebox_runtime *rt)
 {
-    printf("Gracefully exiting\n");
+    whitebox_log(WBL_INFO, "Gracefully exiting\n");
     fsync(rt->fd);
     whitebox_munmap(wb);
     whitebox_close(wb);
@@ -1133,7 +935,15 @@ void whitebox_finish(whitebox_t *wb, struct whitebox_config *config, struct whit
     if (config->z_filename)
         free(config->z_filename);
 
-    printf("Bytes written: %d\n", rt->i << 2);
+    whitebox_log(WBL_INFO, "Bytes written: %d\n", rt->i << 2);
+
+    fclose(rt->log_file);
+}
+
+void whiteboxd_log_handler(int priority, const char *message)
+{
+    fprintf(stderr, message);
+    fflush(stderr);
 }
 
 void exit_handler(int signo)
@@ -1178,11 +988,12 @@ int main(int argc, char **argv)
             { "am", required_argument, 0, 'A' },
             { "duration", required_argument, 0, 'd' },
             { "test", no_argument, 0, 0 },
+            { "log", required_argument, 0, 'l' },
             { 0, 0, 0, 0 }
         };
         int option_index = 0;
 
-        c = getopt_long(argc, argv, "r:c:p:f:t:A:d:vD",
+        c = getopt_long(argc, argv, "r:c:p:f:t:A:d:l:vD",
                 long_options, &option_index);
 
         if (c == -1)
@@ -1227,6 +1038,14 @@ int main(int argc, char **argv)
                 //config->mode = WBM_IQ_FILE;
                 break;
 
+            case 'l':
+                rt.log_file = fopen(optarg, "w");
+                if (!rt.log_file) {
+                    perror("fopen");
+                    exit(1);
+                }
+                break;
+
             case 't':
                 config->tone1 = atof(optarg);
                 //config->mode = WBM_IQ_TONE;
@@ -1252,6 +1071,8 @@ int main(int argc, char **argv)
 
     config->mode = WBM_IDLE;
 
+    whitebox_log_init(rt.log_file, config->verbose_flag);
+
     if(whitebox_start(&wb, config, &rt) < 0)
         return -1;
 
@@ -1263,8 +1084,7 @@ int main(int argc, char **argv)
 
     clock_gettime(CLOCK_MONOTONIC, &end);
 
-    if (config->verbose_flag)
-        printf("\nWall time: %f ms\n", diff(start, end));
+    whitebox_log(WBL_INFO, "Wall time: %f ms\n", diff(start, end));
 
     return 0;
 }

@@ -11,6 +11,16 @@
 #include "adf4351.h"
 #include "dsp.h"
 
+typedef void (*whitebox_log_handler)(int priority, const char *message);
+
+#define WBL_ERROR 0
+#define WBL_WARN  1
+#define WBL_INFO  2
+#define WBL_DEBUG 3
+
+void whitebox_log_init(FILE *log_file, int priority);
+void whitebox_log(int priority, const char *format, ...);
+
 typedef struct whitebox {
     int fd;
     cmx991_t cmx991;

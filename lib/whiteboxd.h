@@ -4,6 +4,7 @@
 #include "whitebox.h"
 #include "http.h"
 #include <poll.h>
+#include <netinet/in.h>
 
 /**
  * container_of - cast a member of a structure out to the containing structure
@@ -69,5 +70,94 @@ int (*modulate)(struct whitebox_source *iq_source,
 
 int modulate_idle(struct whitebox_source *iq_source,
         struct whitebox_source *audio_source);
+
+enum whitebox_mode {
+    WBM_IDLE         = 0x00000000,
+    WBM_IQ_SOCKET    = 0x00000001,
+    WBM_IQ_FILE      = 0x00000002,
+    WBM_IQ_TONE      = 0x00000004,
+    WBM_IQ_TEST      = 0x00000010,
+    WBM_AUDIO_TONE   = 0x00000100,
+    WBM_AUDIO_SOCKET = 0x00000200,
+};
+
+#define WBM_DEFAULT   WBM_IQ_SOCKET
+#define WBM_IQ_FD (WBM_IQ_SOCKET | WBM_IQ_FILE)
+#define WBM_IQ_MIXED  (WBM_AUDIO_TONE | WBM_AUDIO_SOCKET)
+#define WBM_AUDIO_FD (WBM_AUDIO_SOCKET)
+#define WBM_FROM_SOCKET (WBM_IQ_SOCKET)
+
+struct whitebox_config {
+    enum whitebox_mode mode;
+
+    int verbose_flag;
+    int sample_rate;
+    float carrier_freq;
+    unsigned short ctl_port;
+    unsigned short audio_port;
+    unsigned short port;
+    float duration;
+    int debug;
+    
+    // complex variable z
+    char *z_filename;
+    float tone1;
+
+    // real variable x
+    float tone2;
+    int16_t tone2_offset;
+
+    int ctl_enable;
+    int dat_enable;
+    int httpd_enable;
+    int audio_enable;
+
+    char modulation[256];
+    char audio_source[256];
+    char iq_source[256];
+};
+
+struct whitebox_runtime {
+    int fd;
+    FILE *log_file;
+    int i;
+    int latency_ms;
+
+    int ctl_listening_fd;
+    struct sockaddr_in ctl_sock_me, ctl_sock_other;
+    size_t ctl_slen;
+    int ctl_fd;
+    int ctl_needs_poll;
+    
+    int dat_listening_fd;
+    struct sockaddr_in dat_sock_me, dat_sock_other;
+    size_t dat_slen;
+    int dat_fd;
+    int dat_needs_poll;
+
+    int audio_listening_fd;
+    struct sockaddr_in audio_sock_me, audio_sock_other;
+    size_t audio_slen;
+    int audio_fd;
+    int audio_needs_poll;
+
+
+    uint32_t tone1_fcw;
+    uint32_t tone1_phase;
+
+    uint32_t tone2_fcw;
+    uint32_t tone2_phase;
+
+    int16_t global_re;
+    int16_t global_im;
+
+    struct whitebox_source *iq_source;
+    struct whitebox_source *audio_source;
+
+    int ptt;
+    int ptl;
+
+    int rx_cal;
+};
 
 #endif /* __WHITEBOXD_H__ */

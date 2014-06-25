@@ -111,6 +111,7 @@ struct whitebox_config {
     int dat_enable;
     int httpd_enable;
     int audio_enable;
+    int cat_enable;
 
     char modulation[256];
     char audio_source[256];
@@ -141,6 +142,9 @@ struct whitebox_runtime {
     int audio_fd;
     int audio_needs_poll;
 
+    int cat_fd;
+    int cat_needs_poll;
+    void *cat_dat;
 
     uint32_t tone1_fcw;
     uint32_t tone1_phase;

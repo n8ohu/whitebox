@@ -18,3 +18,4 @@ ifconfig lo 127.0.0.1
 mkdir /mnt
 mount -o nolock,rsize=1024 $HOST_IP_ADDR:$HOST_NFS_DIR /mnt
 
+#whiteboxd -D -v -v -l /mnt/whitebox/build/lib/whiteboxd.log

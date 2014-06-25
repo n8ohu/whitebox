@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <termios.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
@@ -110,6 +111,7 @@ void whitebox_config_init(struct whitebox_config *config)
     config->audio_enable = 1;
     config->ctl_enable = 1;
     config->httpd_enable = 1;
+    config->cat_enable = 1;
 
     strncpy(config->modulation, "iq", 255);
     strncpy(config->audio_source, "constant", 255);
@@ -133,6 +135,8 @@ void whitebox_runtime_init(struct whitebox_runtime *rt)
     rt->audio_needs_poll = 0;
     rt->audio_listening_fd = -1;
     rt->audio_slen = sizeof(rt->audio_sock_other);
+    rt->cat_fd = 0; // stdin
+    rt->cat_needs_poll = 1;
     rt->tone1_fcw = 0;
     rt->tone1_phase = 0;
     rt->tone2_fcw = 0;
@@ -238,6 +242,8 @@ int change_mode(whitebox_t *wb, struct whitebox_config *config,
     return 0;
 }
 
+static struct termios global_orig_termios_config;
+
 int whitebox_start(whitebox_t *wb, struct whitebox_config *config,
         struct whitebox_runtime *rt)
 {
@@ -335,6 +341,27 @@ int whitebox_start(whitebox_t *wb, struct whitebox_config *config,
             perror("listen");
             return -1;
         }
+    }
+
+    if (config->cat_enable) {
+        struct termios config;
+        cat_init(wb, &config, rt);
+        if (!isatty(rt->cat_fd)) {
+            perror("not in a tty");
+            return -1;
+        }
+        if (tcgetattr(rt->cat_fd, &config) < 0) {
+            perror("tcgetattr");
+            return -1;
+        }
+        tcgetattr(rt->cat_fd, &global_orig_termios_config);
+        config.c_lflag &= ~(ECHO | ECHONL | ICANON);
+        if (tcsetattr(rt->cat_fd, TCSAFLUSH, &config) < 0) {
+            perror("tcsetattr");
+            return -1;
+        }
+        whitebox_log(WBL_INFO, "ttyname=%s\n",
+            ttyname(0));
     }
 
     change_mode(wb, config, rt, config->mode);
@@ -636,11 +663,12 @@ int config_change(whitebox_t *wb, struct whitebox_config *config,
 #define WFD_WHITEBOX     0
 #define WFD_AUDIO_SOCK   1
 #define WFD_DAT_SOCK     2
-#define WFD_AUDIO_LISTEN 3
-#define WFD_DAT_LISTEN   4
-#define WFD_CTL_LISTEN   5
-#define WFD_CTL_SOCK     6
-#define WFD_END          7
+#define WFD_CAT          3
+#define WFD_AUDIO_LISTEN 4
+#define WFD_DAT_LISTEN   5
+#define WFD_CTL_LISTEN   6
+#define WFD_CTL_SOCK     7
+#define WFD_END          8
 
 int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
         struct whitebox_runtime *rt, long total_samples)
@@ -684,6 +712,11 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
     }
     fcnt++;
 
+    fds[WFD_CAT].fd = rt->cat_fd;
+    fds[WFD_CAT].events = 0;
+    fds[fcnt].events |= POLLIN;
+    fcnt++;
+
     if (config->ctl_enable) {
         fds[fcnt].fd = rt->ctl_listening_fd;
         fds[fcnt].events = POLLIN;
@@ -713,6 +746,11 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
         return -1;
     }
     clock_gettime(CLOCK_MONOTONIC, &tl_poll);
+
+    // step, do cat control
+    if (fds[WFD_CAT].revents & POLLIN) {
+        cat_ctl(wb, config, rt);
+    }
 
     // step 2. get the destination address and available space in whitebox sink
     if (fds[WFD_WHITEBOX].revents & POLLOUT) {
@@ -813,7 +851,7 @@ int whitebox_step(whitebox_t *wb, struct whitebox_config *config,
         }*/
     }
 
-    for (f = 3; f < fcnt; ++f) {
+    for (f = 4; f < fcnt; ++f) {
         if ((fds[f].fd == rt->ctl_listening_fd)
                 && (fds[f].revents & POLLIN)) {
             int fd;
@@ -931,6 +969,8 @@ void whitebox_finish(whitebox_t *wb, struct whitebox_config *config, struct whit
         close(rt->audio_listening_fd);
     if (config->ctl_enable)
         close(rt->ctl_listening_fd);
+    if (config->cat_enable)
+        tcsetattr(rt->cat_fd, TCSAFLUSH, &global_orig_termios_config);
 
     if (config->z_filename)
         free(config->z_filename);

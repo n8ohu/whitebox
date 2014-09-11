@@ -1,10 +1,21 @@
 #!/bin/sh
+HOST_IP_ADDR=192.168.220.1
+#HOST_SYSLOG_PORT=514
+HOST_NFS_DIR=/srv/home
+
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t debugfs none /sys/kernel/debug
 mount -t devpts none /dev/pts
-mkdir /mnt
-mount -o nolock,rsize=1024 192.168.220.1:/srv/home /mnt
-ifconfig lo 127.0.0.1
+
+# Turn this on if you want syslog logging to a remote machine.
+#syslogd -R $HOST_IP_ADDR:$HOST_SYSLOG_PORT -L -O /var/log/messages
+#klogd
 
 modprobe whitebox
+
+ifconfig lo 127.0.0.1
+mkdir /mnt
+mount -o nolock,rsize=1024 $HOST_IP_ADDR:$HOST_NFS_DIR /mnt
+
+#whiteboxd -D -v -v -l /mnt/whitebox/build/lib/whiteboxd.log

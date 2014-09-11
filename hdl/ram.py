@@ -4,8 +4,8 @@ from myhdl import \
         Signal, ResetSignal, intbv, modbv, enum, concat, \
         instance, always, always_comb, always_seq, \
         traceSignals, Simulation, delay, StopSimulation
-import numpy as np
 
+modnum = 0
 def ram4k9(reset,
            addra,
            dina,
@@ -28,8 +28,23 @@ def ram4k9(reset,
            clkb,
            doutb,
            **kwargs):
-    
     """An Actel RAM4K9 block."""
+    # Each instance gets its own number
+    global modnum
+    modnum = modnum + 1
+
+    # Clear warnings during code generation
+    douta.driven = True
+    doutb.driven = True
+    dina.read = True
+    dinb.read = True
+    wena.read = True
+    wenb.read = True
+    addra.read = True
+    addrb.read = True
+    blka.read = True
+    blkb.read = True
+
     if not widtha1 and not widtha0:
         widtha = 1
         deptha = 4096
@@ -104,7 +119,7 @@ def ram4k9(reset,
     return porta, portb
 
 ram4k9.verilog_code = '''
-RAM4K9 RAM4K9_0(
+RAM4K9 ram_${modnum}(
     .RESET(${reset}),
     .ADDRA(${addra}),
     .DINA(${dina}),

@@ -87,6 +87,9 @@ slink /bin/wget busybox 777 0 0
 slink /bin/vi busybox 777 0 0
 slink /bin/udhcpc busybox 777 0 0
 slink /bin/nc busybox 777 0 0
+slink /bin/syslogd busybox 777 0 0
+slink /bin/klogd busybox 777 0 0
+slink /bin/logger busybox 777 0 0
 ifarch A2F file /bin/iap_tool @INSTALL_ROOT@/A2F/root/usr/bin/iap_tool 755 0 0
 
 dir /usr 755 0 0

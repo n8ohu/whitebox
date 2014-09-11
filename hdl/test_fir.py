@@ -199,7 +199,7 @@ class TestFirImpulse(unittest.TestCase):
         coeff_ram = Ram2(s.clearn, s.clock, s.clock, data=taps)
         delay_line_i_ram = Ram(s.clearn, s.clock, s.clock)
         delay_line_q_ram = Ram(s.clearn, s.clock, s.clock)
-        bypass = Signal(bool(0))
+        enable = Signal(bool(1))
         bank1 = Signal(bool(0))
         bank0 = Signal(bool(0))
         N = Signal(intbv(4, min=0, max=2**7-1))
@@ -226,7 +226,7 @@ class TestFirImpulse(unittest.TestCase):
                     delay_line_q_ram.port['a'].blk,
                     delay_line_q_ram.port['a'].wen,
                     delay_line_q_ram.port['a'].dout,
-                    bypass, bank1, bank0, N,
+                    enable, bank1, bank0, N,
                     sim=s)
 
             return fir_0, coeff_ram.rama, coeff_ram.ramb, delay_line_i_ram.ram, delay_line_q_ram.ram
@@ -236,15 +236,14 @@ class TestFirImpulse(unittest.TestCase):
         in_c = 0*in_t + 1j * 0*in_t
         in_i = 0*in_t
         in_q = 0*in_t
-        in_i[0] = 1 << 5
-        in_i[4] = 1 << 5
+        in_i[0] = 1 << 7
+        in_i[4] = 1 << 7
 
         out_i, out_q = s.simulate_quadrature(in_i, in_q, test_fir_impulse, interp=128)
         out_t = arange(0, out_i.shape[0])
 
         new_shape = tuple([in_t.shape[i] for i in range(len(in_t.shape))])
         assert out_t.shape == new_shape
-        print 'out_i', out_i
         assert array_equal(out_i, [4, 3, 2, 1, 4, 3, 2, 1])
 
 class TestFirBypass(unittest.TestCase):
@@ -260,7 +259,7 @@ class TestFirBypass(unittest.TestCase):
         coeff_ram = Ram2(s.clearn, s.clock, s.clock, data=taps)
         delay_line_i_ram = Ram(s.clearn, s.clock, s.clock)
         delay_line_q_ram = Ram(s.clearn, s.clock, s.clock)
-        bypass = Signal(bool(1))
+        enable = Signal(bool(0))
         bank1 = Signal(bool(0))
         bank0 = Signal(bool(0))
         N = Signal(intbv(4, min=0, max=2**7-1))
@@ -287,25 +286,25 @@ class TestFirBypass(unittest.TestCase):
                     delay_line_q_ram.port['a'].blk,
                     delay_line_q_ram.port['a'].wen,
                     delay_line_q_ram.port['a'].dout,
-                    bypass, bank1, bank0, N,
+                    enable, bank1, bank0, N,
                     sim=s)
 
-            return fir_0, coeff_ram.ram, delay_line_i_ram.ram, delay_line_q_ram.ram
+            return fir_0, coeff_ram.rama, coeff_ram.ramb, delay_line_i_ram.ram, delay_line_q_ram.ram
 
         in_t = arange(0, 8)
 
         in_c = 0*in_t + 1j * 0*in_t
         in_i = 0*in_t
         in_q = 0*in_t
-        in_i[0] = 1 << COEFF_SHIFT
-        in_i[4] = 1 << COEFF_SHIFT
+        in_i[0] = 1
+        in_i[4] = 1
 
         out_i, out_q = s.simulate_quadrature(in_i, in_q, test_fir_bypass, interp=128)
         out_t = arange(0, out_i.shape[0])
 
         new_shape = tuple([in_t.shape[i] for i in range(len(in_t.shape))])
         assert out_t.shape == new_shape
-        assert array_equal(out_i >> 5, array([1, 0, 0, 0, 1, 0, 0, 0]))
+        assert array_equal(out_i, array([1, 0, 0, 0, 1, 0, 0, 0]))
 
 class TestFirDesign(unittest.TestCase):
     def test_fir_design(self):

@@ -94,3 +94,7 @@ add_test(NAME target_test_driver
 add_test(NAME target_test_device
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/util/serial_command.py --tty=${TTY} --baud=${BAUD} test_device
 )
+
+add_test(NAME target_test_daemon
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon.py --tty=${TTY} --baud=${BAUD} --ip=${TARGET_IP} test_daemon
+)

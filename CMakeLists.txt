@@ -39,13 +39,16 @@ if(NOT IS_DIRECTORY ${TFTP_DIR})
 endif()
 
 if(NOT EXISTS ${TTY})
-    message(WARNING "no tty for the target")
+    message(WARNING "no tty for the target; target testing disabled")
 endif()
 
 if(NOT DEFINED BAUD)
     set(BAUD "115200")
 endif()
 
+if(NOT DEFINED TARGET_IP)
+    message(WARNING "no ip address set for the target; target testing disabled")
+endif()
 
 add_subdirectory(linux-cortexm)
 

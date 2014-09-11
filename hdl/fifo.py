@@ -25,6 +25,7 @@ active_low = lambda s: not s
 posedge = lambda s: s.posedge
 negedge = lambda s: s.negedge
 
+modnum = 0
 def fifo(resetn,
          re,
          rclk,
@@ -51,6 +52,22 @@ def fifo(resetn,
     an auto-generated IP Core is used instead.  To see how to build the
     the IP core yourself with Libero IDE, check out this video (TODO).
     """
+    # Every instance gets a unique number
+    global modnum
+    modnum = modnum + 1
+    
+    # Supress warnings about signals coming from fifo
+    re.read = True
+    we.read = True
+    Q.driven = True
+    data.read = True
+    full.driven = True
+    afull.driven = True
+    empty.driven = True
+    aempty.driven = True
+    dvld.driven = True
+    wrcnt.driven = True
+    rdcnt.driven = True
 
     width = kwargs['width']
     depth = kwargs['depth']
@@ -133,7 +150,7 @@ def fifo(resetn,
     return instances()
 
 fifo.verilog_code = '''
-actel_fifo_${width}_${depth} actel_fifo_${width}_${depth}_0(
+actel_soft_fifo_${width}_${depth} fifo_${modnum}(
     .DATA(${data}),
     .Q(${Q}),
     .WE(${we}),
@@ -147,6 +164,12 @@ actel_fifo_${width}_${depth} actel_fifo_${width}_${depth}_0(
     .AFULL(${afull}),
     .AEVAL(${aeval}),
     .AFVAL(${afval})
+    .WACK(${wack}),
+    .DVLD(${dvld}),
+    .OVERFLOW(${overflow}),
+    .UNDERFLOW(${underflow}),
+    .RDCNT(${rdcnt}),
+    .WRCNT(${wrcnt})
 );
 '''
 

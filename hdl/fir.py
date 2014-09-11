@@ -82,6 +82,8 @@ def fir(clearn, clock, in_sign, out_sign,
 
     @always_seq(clock.posedge, reset=clearn)
     def operator():
+        #if out_valid:
+        #    print 'out', { 'out_i': out_i, 'out_q': out_q }
         if state == state_t.READY:
             k.next = 0
             ac_i.next = 0
@@ -104,6 +106,7 @@ def fir(clearn, clock, in_sign, out_sign,
             out_last.next = last
             out_i.next = ac_i[len(ac_i):len(ac_i)-len(out_i)].signed()
             out_q.next = ac_q[len(ac_q):len(ac_q)-len(out_q)].signed()
+            #print 'done', { 'ac_i': ac_i, 'ac_q': ac_q }
             state.next = state_t.READY
             n.next = n + 1
             ac_i.next = 0
@@ -116,6 +119,7 @@ def fir(clearn, clock, in_sign, out_sign,
             if state == state_t.RUN:
                 ac_i.next = ac_i + m_i
                 ac_q.next = ac_q + m_q
+                #print 'step', { 'ac_i': ac_i, 'ac_q': ac_q, 'm_i': m_i, 'm_q': m_q }
             elif state == state_t.WAIT1:
                 state.next = state_t.WAIT2
             elif state == state_t.WAIT2:

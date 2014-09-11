@@ -35,8 +35,14 @@ add_custom_command(
     DEPENDS whitebox.py apb3_utils.py fifo.py duc.py ddc.py dds.py rfe.py dsp.py ram.py fir.py
 ) 
 
+add_custom_command(
+    OUTPUT whitebox_toplevel.v
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/whitebox_toplevel.py
+    DEPENDS whitebox_toplevel.py whitebox.py
+)
+
 add_custom_target(hdl
-    DEPENDS whitebox.v
+    DEPENDS whitebox.v whitebox_toplevel.v
 )
 
 add_test(NAME test_apb3_simple_slave

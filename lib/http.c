@@ -6,9 +6,11 @@
 #include <stdarg.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
-#include "unistd.h"
 #include "http.h"
+#include "whitebox.h"
+#include "whiteboxd.h"
 
 int http_parse_status(struct http_request *r, char *line)
 {
@@ -214,5 +216,102 @@ int http_respond_string(int fd,
         return -1;
     
     return send(fd, r->response, r->response_len, 0);
+}
+
+char *html_path(struct whitebox_config *config)
+{
+    if (config->debug)
+        return "/mnt/whitebox/lib/www/index.html";
+    else
+        return "/var/www/index.html";
+}
+
+int http_ctl(whitebox_t *wb, struct whitebox_config *config,
+        struct whitebox_runtime *rt)
+{
+    // This must be static!
+    static struct http_request request;
+
+    struct http_request *r = &request;
+    int result;
+
+    if (!config->httpd_enable) {
+        result = http_respond_error(rt->ctl_fd, r, 404);
+        goto done;
+    }
+
+    result = http_parse(rt->ctl_fd, r);
+    if (result < 0) {
+        printf("parse fail\n");
+        goto done;
+    }
+
+    if (strcmp(r->method, "GET") == 0 && strcmp(r->url, "/") == 0) {
+        result = http_respond_file(rt->ctl_fd, r,
+                "text/html",
+                html_path(config));
+    } else if (strcmp(r->method, "GET") == 0 && strcmp(r->url, "/config") == 0) {
+        int16_t correct_i, correct_q;
+        float gain_i, gain_q;
+        int16_t rx_correct_i, rx_correct_q;
+        
+        whitebox_tx_get_correction(wb, &correct_i, &correct_q);
+        whitebox_tx_get_gain(wb, &gain_i, &gain_q);
+        whitebox_rx_get_correction(wb, &rx_correct_i, &rx_correct_q);
+
+        result = http_respond_string(rt->ctl_fd, r,
+                "application/json",
+                "{ \"offset_correct_i\": %d,"
+                "\"offset_correct_q\": %d,"
+                "\"gain_i\": %.2f,"
+                "\"gain_q\": %.2f,"
+                "\"tone1\": %.1f,"
+                "\"tone2\": %.1f,"
+                "\"freq\": %.3f,"
+                "\"ptt\": %d,"
+                "\"ptl\": %d,"
+                "\"rx_cal\": %d,"
+                "\"rx_offset_correct_i\": %d,"
+                "\"rx_offset_correct_q\": %d,"
+                "\"mode\": \"%s\","
+                "\"latency\": \"%d\","
+                "\"modulation\": \"%s\","
+                "\"audio_source\": \"%s\","
+                "\"iq_source\": \"%s\""
+                "}",
+                correct_i, correct_q,
+                gain_i, gain_q,
+                config->tone1, config->tone2,
+                config->carrier_freq,
+                rt->ptt, rt->ptl,
+                rt->rx_cal,
+                rx_correct_i, rx_correct_q,
+                whitebox_mode_to_string(config->mode),
+                rt->latency_ms,
+                config->modulation,
+                config->audio_source,
+                config->iq_source
+                );
+    } else if (strcmp(r->method, "POST") == 0 && strcmp(r->url, "/") == 0) {
+        int i = 0;
+        while (i < HTTP_PARAMS_MAX && strlen(r->params[i].name) > 0) {
+            if (config_change(wb, config, rt, r->params[i].name, r->params[i].value) < 0) {
+                result = http_respond_error(rt->ctl_fd, r, 404);
+                goto done;
+            }
+            i++;
+        }
+        result = http_respond_string(rt->ctl_fd, r,
+                "text/plain",
+                "OK");
+    } else {
+        result = http_respond_error(rt->ctl_fd, r, 404);
+    }
+
+done:
+    close(rt->ctl_fd);
+    rt->ctl_needs_poll = 0;
+    rt->ctl_fd = -1;
+    return result;
 }
 

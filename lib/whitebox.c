@@ -2,11 +2,45 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <math.h>
 
 #include "whitebox.h"
+
+static whitebox_log_handler global_log_handler = 0;
+static int global_priority = 0;
+static FILE* global_log_file = 0;
+
+void whitebox_log_init(FILE *log_file, int priority)
+{
+    global_log_file = log_file;
+    global_priority = priority;
+}
+
+#define LOG_MESSAGE_LEN 4095
+
+void whitebox_log(int priority, const char *format, ...)
+{
+    va_list arglist;
+    static char message[LOG_MESSAGE_LEN + 1];
+
+    va_start(arglist, format);
+    vsnprintf(message, LOG_MESSAGE_LEN, format, arglist);
+    va_end(arglist);
+    
+    if (global_log_file && priority <= global_priority) {
+        if(fprintf(global_log_file, message) < 0)
+            exit(1);
+        if (fflush(global_log_file))
+            exit(1);
+        // TODO: THIS IS SLOW!  We need syslog support, but doing
+        // that well depends on supporting the RTC which is not
+        // done yet.
+        //fsync(fileno(global_log_file));
+    }
+}
 
 int whitebox_parameter_set(const char *param, int value)
 {
@@ -89,7 +123,7 @@ int whitebox_open(whitebox_t* wb, const char* filn, int flags, int rate) {
     wb->fd = open(filename, flags);
 
     if (W_DAC_RATE_HZ % rate != 0) {
-        fprintf(stderr, "Error, sample rate is not a multiple of DAC clock rate!");
+        whitebox_log(WBL_ERROR, "error, sample rate is not a multiple of DAC clock rate!");
         exit(1);
     }
 
@@ -213,14 +247,14 @@ int whitebox_tx(whitebox_t* wb, float frequency) {
     cmx991_resume(&wb->cmx991);
 #if WC_USE_PLL
     if (cmx991_pll_enable_m_n(&wb->cmx991, 19.2e6, 192, 1800) < 0) {
-        fprintf(stderr, "Error setting the pll\n");
+        whitebox_log(WBL_ERROR, "Error setting the pll\n");
         return 1;
     }
 #endif
 
     vco_frequency = (frequency + 45.00e6) * 4.0;
     if (vco_frequency <= 35.00e6) {
-        fprintf(stderr, "VCO frequency too low\n");
+        whitebox_log(WBL_ERROR, "VCO frequency too low\n");
         return 2;
     }
     //printf("%f %f\n", frequency, vco_frequency);
@@ -265,7 +299,7 @@ int whitebox_tx_fine_tune(whitebox_t *wb, float frequency) {
 
     vco_frequency = (frequency + 45.00e6) * 4.0;
     if (vco_frequency <= 35.00e6) {
-        fprintf(stderr, "VCO frequency too low\n");
+        whitebox_log(WBL_ERROR, "VCO frequency too low\n");
         return 2;
     }
 
@@ -428,14 +462,14 @@ int whitebox_rx(whitebox_t* wb, float frequency) {
     cmx991_resume(&wb->cmx991);
 #if WC_USE_PLL
     if (cmx991_pll_enable_m_n(&wb->cmx991, 19.2e6, 192, 1800) < 0) {
-        fprintf(stderr, "Error setting the pll\n");
+        whitebox_log(WBL_ERROR, "Error setting the pll\n");
         return 1;
     }
 #endif
 
     vco_frequency = (frequency + 45.00e6) * 4.0;
     if (vco_frequency <= 35.00e6) {
-        fprintf(stderr, "VCO frequency too low\n");
+        whitebox_log(WBL_ERROR, "VCO frequency too low\n");
         return 2;
     }
 
@@ -460,7 +494,7 @@ int whitebox_rx_fine_tune(whitebox_t *wb, float frequency) {
 
     vco_frequency = (frequency + 45.00e6) * 4.0;
     if (vco_frequency <= 35.00e6) {
-        fprintf(stderr, "VCO frequency too low\n");
+        whitebox_log(WBL_ERROR, "VCO frequency too low\n");
         return 2;
     }
 

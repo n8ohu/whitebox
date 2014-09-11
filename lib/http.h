@@ -48,4 +48,11 @@ int http_respond_error(int fd,
         struct http_request *r,
         int code);
 
+struct whitebox;
+struct whitebox_config;
+struct whitebox_runtime;
+
+int http_ctl(struct whitebox *wb, struct whitebox_config *config,
+        struct whitebox_runtime *rt);
+
 #endif /* __WHITEBOX_HTTP_H__ */

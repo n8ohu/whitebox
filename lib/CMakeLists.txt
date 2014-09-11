@@ -18,6 +18,7 @@ set(WHITEBOX_SRCS
     cmx991.c
     dsp.c
     http.c
+    cat.c
 )
 
 add_library(whitebox ${WHITEBOX_SRCS})
@@ -31,6 +32,7 @@ set(WHITEBOX_PUBLIC_HEADERS
     cmx991.h
     dsp.h
     http.h
+    cat.h
 )
 
 #install(FILES ${WHITEBOX_PUBLIC_HEADERS}
